@@ -52,10 +52,8 @@ int main() {
             train_acc = two_layer_net_accuracy(network, x_train, t_train);
             test_acc = two_layer_net_accuracy(network, x_test, t_test);
 
-            //printf("[%d] : ", i);
-            //NdArray_printArray(loss);
-            //printf("train_acc : %f\n", train_acc);
-            printf("test_acc  : %f\n\n", test_acc);
+            printf("train_acc : %f\n", train_acc);
+            printf("test_acc  : %f\n", test_acc);
         }
 
         NdArray_free(&batch_indices);

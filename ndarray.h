@@ -45,7 +45,7 @@ NdArray* NdArray_choice(unsigned int pick_len, unsigned int len, DataType dataty
 
 // reshape ndarray
 int NdArray_reshape(NdArray *ndarray, NdShape *ndshape);
-int NdArray_reshape_array(NdArray *self, unsigned int dim, unsigned int *arr);
+int NdArray_reshape_fixed_array(NdArray *self, unsigned int dim, unsigned int *arr);
 int NdArray_reshape_variadic(NdArray *self, unsigned int dim, ...);
 
 // get, set element, ndarray
@@ -59,7 +59,15 @@ void NdArray_printShape(NdArray *ndarray);
 
 // matrix operations
 NdArray* NdArray_dot(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_nn(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_tn(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_nt(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_tt(NdArray *a, NdArray *b);
 NdArray* NdArray_matmul(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_nn(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_tn(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_nt(NdArray *a, NdArray *b);
+//NdArray* NdArray_matmul_tt(NdArray *a, NdArray *b);
 NdArray* NdArray_transpose(NdArray *ndarray);
 
 NdArray* NdArray_suffle(NdArray *array);
@@ -86,9 +94,9 @@ NdArray* NdArray_compare(NdArray *a, NdArray *b, CompareTag ct);
 NdArray* NdArray_compare_scalar(NdArray *self, double value, CompareTag ct);
 NdArray* NdArray_mask(NdArray *self, NdArray* mask);
 
-int NdArray_sum_int(NdArray *ndarray);
-int NdArray_sum_char(NdArray *ndarray);
-double NdArray_sum_double(NdArray *ndarray);
+long NdArray_sum_int(NdArray *ndarray);
+long NdArray_sum_char(NdArray *ndarray);
+long double NdArray_sum_double(NdArray *ndarray);
 void* NdArray_sum(NdArray *ndarray);
 
 NdArray* NdArray_sum_axis(NdArray *ndarray, unsigned int axis);

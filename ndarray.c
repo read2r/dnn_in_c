@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <time.h>
 #include <math.h>
+#include <omp.h>
 #include "ndarray.h"
 #include "ndshape.h"
 
@@ -40,7 +41,6 @@ NdArray* NdArray_new(void *data, NdShape *ndshape, DataType datatype) {
 
 NdArray* NdArray_copy(NdArray *src) {
     NdArray *dest = NdArray_new(NULL, src->shape, src->datatype);
-    dest->size = src->size;
     memcpy(dest->data, src->data, src->size);
     return dest;
 }
@@ -67,13 +67,14 @@ NdArray* NdArray_zeros(unsigned int len, DataType datatype) {
 
 NdArray* NdArray_ones(unsigned int len, DataType datatype) {
     NdArray *ndarray = NdArray_zeros(len, datatype);
+    void *cur = ndarray->data;
     for(int i = 0; i < len; i++) {
         switch(datatype) {
         case DT_INT:
-            *((int*)ndarray->data + i) = 1;
+            *((int*)cur + i) = 1;
             break;
         case DT_DOUBLE:
-            *((double*)ndarray->data + i) = 1.0;
+            *((double*)cur + i) = 1.0;
             break;
         default:
             abort();
@@ -85,13 +86,14 @@ NdArray* NdArray_ones(unsigned int len, DataType datatype) {
 NdArray* NdArray_arange(unsigned int start, unsigned int end, DataType datatype) {
     int len = end - start;
     NdArray *ndarray = NdArray_zeros(len, datatype);
+    void *cur = ndarray->data;
     for(int i = 0; i < len; i++) {
         switch(datatype) {
         case DT_INT:
-            *((int*)ndarray->data + i) = start + i;
+            *((int*)cur + i) = start + i;
             break;
         case DT_DOUBLE:
-            *((double*)ndarray->data + i) = (double)(start + i);
+            *((double*)cur + i) = (double)(start + i);
             break;
         default:
             abort();
@@ -115,7 +117,6 @@ NdArray* NdArray_random(unsigned int len, DataType datatype) {
         default:
             abort();
         }
-        //cur += ndarray->item_size;
     }
     return ndarray;
 }
@@ -139,7 +140,6 @@ NdArray* NdArray_random_range(unsigned int len, unsigned int low, unsigned int h
         default:
             abort();
         }
-        //cur += ndarray->item_size;
     }
     return ndarray;
 }
@@ -210,43 +210,18 @@ int NdArray_reshape(NdArray *ndarray, NdShape *ndshape) {
 }
 
 int NdArray_reshape_fixed_array(NdArray *self, unsigned int dim, unsigned int *arr) {
-    return 1;
-}
-
-int NdArray_reshape_array(NdArray *self, unsigned int dim, unsigned int *arr) {
-    unsigned int len = 1;
-    for(int i = 0; i < dim; i++) {
-        len *= arr[i];
-    }
-
-    if(len != self->shape->len) {
-        return 0;
-    }
-
-    NdShape_free(&self->shape);
-    self->shape = NdShape_new_array(dim, arr);
-    return 1;
+    return NdShape_reshape_fixed_array(self->shape, dim, arr);
 }
 
 int NdArray_reshape_variadic(NdArray *self, unsigned int dim, ...) {
     unsigned int arr[dim];
-    unsigned int len = 1;
     va_list args;
     va_start(args, dim);
     for(int i = 0; i < dim; i++) {
-        unsigned int temp = va_arg(args, unsigned int);
-        arr[i] = temp;
-        len *= temp;
+        arr[i] = va_arg(args, unsigned int);
     }
     va_end(args);
-
-    if(len != self->shape->len) {
-        return 0;
-    }
-
-    NdShape_free(&self->shape);
-    self->shape = NdShape_new_array(dim, arr);
-    return 1;
+    return NdShape_reshape_fixed_array(self->shape, dim, arr);
 }
 
 unsigned int get_offset(NdArray *ndarray, unsigned int *position, int pdim) {
@@ -300,11 +275,7 @@ void print_element(NdArray *ndarray, unsigned int *position) {
         printf("%d ", *(int*)ptr_element);
         break;
     case DT_DOUBLE:
-        if(-0.000001 < *(double*)ptr_element && *(double*)ptr_element < 0.000001) {
-            printf("%e ", *(double*)ptr_element);
-        } else {
-            printf("%f ", *(double*)ptr_element);
-        }
+        printf("%f ", *(double*)ptr_element);
         break;
     case DT_BOOL:
         printf("%d ", *(char*)ptr_element);
@@ -502,6 +473,129 @@ int NdArray_mod(NdArray *dest, NdArray *src) {
     return 1;
 }
 
+void matmul_int(int *a, int *b, int *c, int p, int q, int r) {
+    #pragma omp parallel for
+    for(int i = 0; i < p; i++) {
+        for(int k = 0; k < q; k++) {
+            register int v = a[i * q + k];
+            for(int j = 0; j < r; j++) {
+                c[i * r + j] += v * b[k * r + j];
+            }
+        }
+    }
+}
+
+void matmul_double(double *a, double *b, double *c, int p, int q, int r) {
+    #pragma omp parallel for
+    for(int i = 0; i < p; i++) {
+        for(int k = 0; k < q; k++) {
+            register double v = a[i * q + k];
+            for(int j = 0; j < r; j++) {
+                c[i * r + j] += v * b[k * r + j];
+            }
+        }
+    }
+}
+
+NdArray* matmul_2d(NdArray *a, NdArray *b) {
+    NdShape *shape_result = NdShape_new(2, a->shape->arr[0], b->shape->arr[1]);
+    NdArray *result = NdArray_new(NULL, shape_result, a->datatype);
+    switch(result->datatype) {
+    case DT_INT:
+        matmul_int(a->data, b->data, result->data,
+            result->shape->arr[0], a->shape->arr[1], result->shape->arr[1]);
+        break;
+    case DT_DOUBLE:
+        matmul_double(a->data, b->data, result->data,
+            result->shape->arr[0], a->shape->arr[1], result->shape->arr[1]);
+        break;
+    default:
+        abort();
+    }
+    return result;
+}
+
+void matmul_recursive(NdArray *result, NdArray *a, NdArray *b, unsigned int *position, unsigned int dim) {
+    NdShape *shape_result = result->shape;
+
+    if(dim >= shape_result->dim-2) {
+        NdShape *shape_a = a->shape;
+        NdShape *shape_b = b->shape;
+
+        unsigned int position_a[shape_a->dim-2];
+        unsigned int position_b[shape_b->dim-2];
+        
+        int offset_a = (shape_a->dim >= shape_b->dim) ? 0 : shape_b->dim - shape_a->dim;
+        int offset_b = (shape_a->dim >= shape_b->dim) ? shape_a->dim - shape_b->dim : 0;
+        
+        memcpy(position_a, position + offset_a, sizeof(unsigned int) * (shape_a->dim-2));
+        memcpy(position_b, position + offset_b, sizeof(unsigned int) * (shape_b->dim-2));
+
+        void *mat_a = a->data + get_offset(a, position_a, shape_a->dim-2);
+        void *mat_b = b->data + get_offset(b, position_b, shape_b->dim-2);
+        void *mat_result = result->data + get_offset(result, position, dim);
+
+        int p = a->shape->arr[shape_a->dim-2];
+        int q = a->shape->arr[shape_a->dim-1];
+        int r = b->shape->arr[shape_b->dim-1];
+
+        switch(result->datatype) {
+        case DT_INT:
+            matmul_int(mat_a, mat_b, mat_result, p, q, r);
+            break;
+        case DT_DOUBLE:
+            matmul_double(mat_a, mat_b, mat_result, p, q, r);
+            break;
+        default:
+            abort();
+        }
+        
+        return;
+    }
+
+    for(int i = 0; i < shape_result->arr[dim]; i++) {
+        position[dim] = i;
+        matmul_recursive(result, a, b, position, dim+1);
+    }
+}
+
+NdArray* matmul_nd(NdArray *a, NdArray *b) {
+    NdArray *result;
+    NdShape *shape_result;
+    DataType datatype_result;
+
+    datatype_result = a->datatype;
+    NdShape *shape_a = a->shape;
+    NdShape *shape_b = b->shape;
+
+    int bound = (shape_a->dim >= shape_b->dim) ? shape_b->dim-2 : shape_a->dim-2;
+    for(int i = 0; i < bound; i++) {
+        if(shape_a->arr[shape_a->dim-i-3] != shape_b->arr[shape_b->dim-i-3]) {
+            return NULL;
+        }
+    }
+
+    if(shape_a->dim >= shape_b->dim) {
+        shape_result = NdShape_copy(shape_a);
+        shape_result->arr[shape_result->dim-1] = shape_b->arr[shape_b->dim-1];
+    } else {
+        shape_result = NdShape_copy(shape_b);
+        shape_result->arr[shape_result->dim-2] = shape_a->arr[shape_a->dim-2];
+    }
+    result = NdArray_new(NULL, shape_result, datatype_result);
+
+    unsigned int position[shape_result->dim-2];
+    memset(position, 0, sizeof(unsigned int) * (shape_result->dim-2));
+
+    matmul_recursive(result, a, b, position, 0);
+
+    return result;
+}
+
+NdArray* dot_2d(NdArray *a, NdArray *b) {
+    return matmul_2d(a, b);
+}
+
 void dot_recursive(NdArray *result, NdArray *a, NdArray *b, unsigned int *position, unsigned int dim) {
     NdShape *shape_result = result->shape;
 
@@ -544,52 +638,7 @@ void dot_recursive(NdArray *result, NdArray *a, NdArray *b, unsigned int *positi
     }
 }
 
-void matmul_recursive(NdArray *result, NdArray *a, NdArray *b, unsigned int *position, unsigned int dim) {
-    NdShape *shape_result = result->shape;
-
-    if(dim >= shape_result->dim) {
-        NdShape *shape_a = a->shape;
-        NdShape *shape_b = b->shape;
-
-        unsigned int position_a[shape_a->dim];
-        unsigned int position_b[shape_b->dim];
-        
-        int offset_a = (shape_a->dim >= shape_b->dim) ? 0 : shape_b->dim - shape_a->dim;
-        int offset_b = (shape_a->dim >= shape_b->dim) ? shape_a->dim - shape_b->dim : 0;
-        
-        memcpy(position_a, position + offset_a, sizeof(unsigned int) * shape_a->dim);
-        memcpy(position_b, position + offset_b, sizeof(unsigned int) * shape_b->dim);
-
-        void *ptr_value_a;
-        void *ptr_value_b;
-        void *ptr_value_result = NdArray_getAt(result, position);
-        memset(ptr_value_result, 0, result->item_size);
-
-        for(int i = 0; i < shape_a->arr[shape_a->dim-1]; i++) {
-            position_a[shape_a->dim-1] = i;
-            position_b[shape_b->dim-2] = i;
-
-            ptr_value_a = NdArray_getAt(a, position_a);
-            ptr_value_b = NdArray_getAt(b, position_b);
-            
-            if(result->datatype == DT_INT) {
-                *(int*)ptr_value_result += (*(int*)ptr_value_a) * (*(int*)ptr_value_b);
-            } else if(result->datatype == DT_DOUBLE) {
-                *(double*)ptr_value_result += (*(double*)ptr_value_a) * (*(double*)ptr_value_b);
-            }
-        }
-
-        return;
-    }
-
-    for(int i = 0; i < shape_result->arr[dim]; i++) {
-        position[dim] = i;
-        matmul_recursive(result, a, b, position, dim+1);
-    }
-}
-
-
-NdArray* NdArray_dot(NdArray *a, NdArray *b) {
+NdArray* dot_nd(NdArray *a, NdArray *b) {
     NdArray *result;
     NdShape *shape_result;
     DataType datatype_result;
@@ -598,10 +647,6 @@ NdArray* NdArray_dot(NdArray *a, NdArray *b) {
 
     NdShape *shape_a = a->shape;
     NdShape *shape_b = b->shape;
-
-    if(shape_a->arr[shape_a->dim-1] != shape_b->arr[shape_b->dim-2]) {
-        return NULL;
-    }
 
     shape_result = NdShape_empty(shape_a->dim + shape_b->dim - 2);
     memcpy(shape_result->arr, shape_a->arr, sizeof(unsigned int) * (shape_a->dim-1));
@@ -622,41 +667,28 @@ NdArray* NdArray_dot(NdArray *a, NdArray *b) {
     return result; 
 }
 
-NdArray* NdArray_matmul(NdArray *a, NdArray *b) {
-    NdArray *result;
-    NdShape *shape_result;
-    DataType datatype_result;
 
-    datatype_result = a->datatype;
-    NdShape *shape_a = a->shape;
-    NdShape *shape_b = b->shape;
-
-    if(shape_a->arr[shape_a->dim-1] != shape_b->arr[shape_b->dim-2]) {
-        printf("nope1\n");
-        return NULL;
+NdArray* NdArray_dot(NdArray *a, NdArray *b) {
+    if(a->shape->arr[a->shape->dim-1] != b->shape->arr[b->shape->dim-2]) {
+        abort();
     }
-
-    int bound = (shape_a->dim >= shape_b->dim) ? shape_b->dim-2 : shape_a->dim-2;
-    for(int i = 0; i < bound; i++) {
-        if(shape_a->arr[shape_a->dim-i-3] != shape_b->arr[shape_b->dim-i-3]) {
-            return NULL;
-        }
-    }
-
-    if(shape_a->dim >= shape_b->dim) {
-        shape_result = NdShape_copy(shape_a);
-        shape_result->arr[shape_result->dim-1] = shape_b->arr[shape_b->dim-1];
+    if(a->shape->dim == 2 && b->shape->dim == 2) {
+        return dot_2d(a, b);
     } else {
-        shape_result = NdShape_copy(shape_b);
-        shape_result->arr[shape_result->dim-2] = shape_a->arr[shape_a->dim-2];
+        return dot_nd(a, b);
     }
-    result = NdArray_new(NULL, shape_result, datatype_result);
+}
 
-    unsigned int position[shape_result->dim];
-    memset(position, 0, sizeof(unsigned int) * shape_result->dim);
-    matmul_recursive(result, a, b, position, 0);
 
-    return result;
+NdArray* NdArray_matmul(NdArray *a, NdArray *b) {
+    if(a->shape->arr[a->shape->dim-1] != b->shape->arr[b->shape->dim-2]) {
+        abort();
+    }
+    if(a->shape->dim == 2 && b->shape->dim == 2) {
+        return matmul_2d(a, b);
+    } else {
+        return matmul_nd(a, b);
+    }
 }
 
 void transpose_recursive(NdArray* array, NdArray *transposed, unsigned int *position, int dim) {
@@ -799,27 +831,27 @@ void NdArray_broadcast(NdArray *ndarray, broadcast_func bfunc) {
     }
 }
 
-int NdArray_sum_char(NdArray *ndarray) {
+long NdArray_sum_char(NdArray *ndarray) {
     char *data = (char*)ndarray->data;
-    int sum = 0;
+    long sum = 0;
     for(int i = 0; i < ndarray->shape->len; i++) {
         sum += data[i];
     }
     return sum;
 }
 
-int NdArray_sum_int(NdArray *ndarray) {
-    int *data = (int *)ndarray->data;
-    int sum = 0;
+long NdArray_sum_int(NdArray *ndarray) {
+    int *data = (int*)ndarray->data;
+    long sum = 0;
     for(int i = 0; i < ndarray->shape->len; i++) {
         sum += data[i];
     }
     return sum;
 }
 
-double NdArray_sum_double(NdArray *ndarray) {
+long double NdArray_sum_double(NdArray *ndarray) {
     double *data = (double*)ndarray->data;
-    double sum = 0;
+    long double sum = 0;
     for(int i = 0; i < ndarray->shape->len; i++) {
         sum += data[i];
     }
@@ -832,6 +864,10 @@ void* NdArray_sum(NdArray *ndarray) {
         *(int*)ptr_sum = NdArray_sum_int(ndarray);
     } else if(ndarray->datatype == DT_DOUBLE) {
         *(double*)ptr_sum = NdArray_sum_double(ndarray);
+    } else if(ndarray->datatype == DT_BOOL) {
+        *(char*)ptr_sum = NdArray_sum_char(ndarray);
+    } else {
+        abort();
     }
     return ptr_sum;
 }
